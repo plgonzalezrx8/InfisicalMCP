@@ -8,6 +8,12 @@ dependencies = [
     "fastmcp>=3.0,<4.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.2",
+]
+
 [project.scripts]
 infisical-mcp = "infisical_mcp.server:main"
 
