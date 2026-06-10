@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 import infisical_mcp.server as server
 from infisical_mcp.client import HttpRequest, HttpResponse, InfisicalClient, InfisicalSettings
@@ -8,7 +11,9 @@ from infisical_mcp.client import HttpRequest, HttpResponse, InfisicalClient, Inf
 
 class FakeTransport:
     def __init__(self, responses: list[HttpResponse] | None = None) -> None:
-        self.responses = responses or [json_response({"ok": True}) for _ in range(100)]
+        if responses is None:
+            responses = [json_response({"ok": True}) for _ in range(100)]
+        self.responses = list(responses)
         self.requests: list[HttpRequest] = []
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
@@ -36,6 +41,22 @@ def install_fake_client(monkeypatch, transport: FakeTransport) -> None:
 
 def body(request: HttpRequest) -> dict:
     return json.loads(request.body or b"{}")
+
+
+def test_fake_transport_respects_explicit_empty_response_list() -> None:
+    transport = FakeTransport([])
+
+    with pytest.raises(IndexError):
+        transport(
+            HttpRequest(
+                method="GET",
+                url="https://infisical.example.com/api/v1/projects",
+                headers={},
+                body=None,
+                timeout_seconds=30,
+                verify_tls=True,
+            )
+        )
 
 
 def test_identity_tools_build_organization_identity_requests(monkeypatch) -> None:
@@ -122,10 +143,12 @@ def test_project_membership_tools_build_user_and_identity_membership_requests(mo
     roles = [{"role": "viewer", "isTemporary": False}]
     server.list_project_user_memberships()
     server.invite_project_users(emails=["ops@example.com"], usernames=[], role_slugs=["viewer"])
+    server.invite_project_users(emails=["member@example.com"], role_slugs=[])
     server.update_project_user_membership("membership-123", roles=roles)
     server.remove_project_users(usernames=["old-user"])
     server.get_project_user_by_username("ops@example.com")
     server.list_project_identity_memberships(roles=["viewer"], search="bot")
+    server.create_project_identity_membership("identity-123", roles=roles)
     server.update_project_identity_membership("identity-123", roles=roles)
     server.delete_project_identity_membership("identity-123")
 
@@ -138,25 +161,48 @@ def test_project_membership_tools_build_user_and_identity_membership_requests(mo
         "usernames": [],
         "roleSlugs": ["viewer"],
     }
-    assert transport.requests[2].method == "PATCH"
-    assert transport.requests[2].url.endswith("/api/v1/projects/project-123/memberships/membership-123")
-    assert body(transport.requests[2]) == {"roles": roles}
-    assert transport.requests[3].method == "DELETE"
-    assert body(transport.requests[3]) == {"usernames": ["old-user"]}
-    assert transport.requests[4].method == "POST"
-    assert transport.requests[4].url.endswith("/api/v1/projects/project-123/memberships/details")
-    assert body(transport.requests[4]) == {"username": "ops@example.com"}
-    assert transport.requests[5].method == "GET"
-    assert transport.requests[5].url == (
+    assert transport.requests[2].method == "POST"
+    assert body(transport.requests[2]) == {"emails": ["member@example.com"]}
+    assert transport.requests[3].method == "PATCH"
+    assert transport.requests[3].url.endswith("/api/v1/projects/project-123/memberships/membership-123")
+    assert body(transport.requests[3]) == {"roles": roles}
+    assert transport.requests[4].method == "DELETE"
+    assert body(transport.requests[4]) == {"usernames": ["old-user"]}
+    assert transport.requests[5].method == "POST"
+    assert transport.requests[5].url.endswith("/api/v1/projects/project-123/memberships/details")
+    assert body(transport.requests[5]) == {"username": "ops@example.com"}
+    assert transport.requests[6].method == "GET"
+    assert transport.requests[6].url == (
         "https://infisical.example.com/api/v1/projects/project-123/memberships/identities"
         "?offset=0&limit=20&search=bot&roles=viewer"
     )
-    assert transport.requests[6].method == "PATCH"
-    assert transport.requests[6].url.endswith(
+    assert transport.requests[7].method == "POST"
+    assert transport.requests[7].url.endswith(
         "/api/v1/projects/project-123/memberships/identities/identity-123"
     )
-    assert body(transport.requests[6]) == {"roles": roles}
-    assert transport.requests[7].method == "DELETE"
+    assert body(transport.requests[7]) == {"roles": roles}
+    assert transport.requests[8].method == "PATCH"
+    assert transport.requests[8].url.endswith(
+        "/api/v1/projects/project-123/memberships/identities/identity-123"
+    )
+    assert body(transport.requests[8]) == {"roles": roles}
+    assert transport.requests[9].method == "DELETE"
+
+
+def test_membership_role_tools_reject_empty_roles(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    with pytest.raises(ValueError, match="roles must include at least one role assignment"):
+        server.update_project_user_membership("membership-123", roles=[])
+
+    with pytest.raises(ValueError, match="roles must include at least one role assignment"):
+        server.create_project_identity_membership("identity-123", roles=[])
+
+    with pytest.raises(ValueError, match="roles must include at least one role assignment"):
+        server.update_project_identity_membership("identity-123", roles=[])
+
+    assert transport.requests == []
 
 
 def test_project_roles_audit_logs_and_secret_imports_requests(monkeypatch) -> None:
@@ -229,6 +275,16 @@ def test_project_roles_audit_logs_and_secret_imports_requests(monkeypatch) -> No
         "environment": "dev",
         "path": "/app",
     }
+
+
+def test_audit_event_metadata_uses_documented_key_value_format(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    server.export_audit_logs(event_metadata={"ipAddress": "127.0.0.1", "secretPath": "/app"})
+
+    query = parse_qs(urlparse(transport.requests[0].url).query)
+    assert query["eventMetadata"] == ["ipAddress=127.0.0.1,secretPath=/app"]
 
 
 def test_org_memberships_identity_privileges_and_secret_import_helpers(monkeypatch) -> None:

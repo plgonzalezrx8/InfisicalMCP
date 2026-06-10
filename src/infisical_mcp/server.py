@@ -452,6 +452,8 @@ def invite_project_users(
     """Invite organization users to a project and assign role slugs."""
     client = get_client()
     project_id = client.default_project_id(project_id)
+    if role_slugs == []:
+        role_slugs = None
     return client.request(
         "POST",
         f"/api/v1/projects/{quote(project_id, safe='')}/memberships",
@@ -472,6 +474,7 @@ def update_project_user_membership(
     project_id: str | None = None,
 ) -> Any:
     """Update a project user membership's assigned roles."""
+    require_roles(roles)
     client = get_client()
     project_id = client.default_project_id(project_id)
     return client.request(
@@ -522,6 +525,7 @@ def create_project_identity_membership(
     project_id: str | None = None,
 ) -> Any:
     """Create a machine identity project membership with assigned roles."""
+    require_roles(roles)
     client = get_client()
     project_id = client.default_project_id(project_id)
     return client.request(
@@ -541,6 +545,7 @@ def update_project_identity_membership(
     project_id: str | None = None,
 ) -> Any:
     """Update a machine identity's project membership roles."""
+    require_roles(roles)
     client = get_client()
     project_id = client.default_project_id(project_id)
     return client.request(
@@ -565,6 +570,11 @@ def delete_project_identity_membership(identity_id: str, project_id: str | None 
             f"{quote(identity_id, safe='')}"
         ),
     )
+
+
+def require_roles(roles: list[dict[str, Any]]) -> None:
+    if not roles:
+        raise ValueError("roles must include at least one role assignment.")
 
 
 @mcp.tool(annotations=READ_ONLY)

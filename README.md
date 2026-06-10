@@ -27,7 +27,7 @@ The server uses Infisical's documented REST API directly:
 - Universal Auth: `POST /api/v1/auth/universal-auth/login`
 - Projects: `/api/v1/projects`
 - Environments: `/api/v1/projects/{projectId}/environments`
-- Organization user memberships: `/api/v2/organizations/{organizationId}/memberships`
+- Organization user memberships: `/api/v2/organizations/{orgId}/memberships`
 - Organization identities: `/api/v1/identities`
 - Organization identity memberships: `/api/v2/organizations/{orgId}/identity-memberships`
 - Project managed identities: `/api/v1/projects/{projectId}/identities`
