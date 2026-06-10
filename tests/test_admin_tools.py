@@ -1,0 +1,307 @@
+from __future__ import annotations
+
+import json
+
+import infisical_mcp.server as server
+from infisical_mcp.client import HttpRequest, HttpResponse, InfisicalClient, InfisicalSettings
+
+
+class FakeTransport:
+    def __init__(self, responses: list[HttpResponse] | None = None) -> None:
+        self.responses = responses or [json_response({"ok": True}) for _ in range(100)]
+        self.requests: list[HttpRequest] = []
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        self.requests.append(request)
+        return self.responses.pop(0)
+
+
+def json_response(payload: object, status: int = 200) -> HttpResponse:
+    return HttpResponse(status=status, headers={}, body=json.dumps(payload).encode())
+
+
+def install_fake_client(monkeypatch, transport: FakeTransport) -> None:
+    client = InfisicalClient(
+        InfisicalSettings(
+            base_url="https://infisical.example.com",
+            token="token-123",
+            default_project_id="project-123",
+            default_environment="dev",
+            default_secret_path="/app",
+        ),
+        transport=transport,
+    )
+    monkeypatch.setattr(server, "get_client", lambda: client)
+
+
+def body(request: HttpRequest) -> dict:
+    return json.loads(request.body or b"{}")
+
+
+def test_identity_tools_build_organization_identity_requests(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    server.list_identities(org_id="org-123")
+    server.get_identity(identity_id="identity-123")
+    server.create_identity(
+        name="deploy-bot",
+        organization_id="org-123",
+        role="member",
+        has_delete_protection=True,
+        metadata=[{"key": "owner", "value": "platform"}],
+    )
+    server.update_identity(identity_id="identity-123", name="renamed", role="admin")
+    server.delete_identity(identity_id="identity-123")
+
+    assert transport.requests[0].method == "GET"
+    assert transport.requests[0].url == "https://infisical.example.com/api/v1/identities?orgId=org-123"
+    assert transport.requests[1].method == "GET"
+    assert transport.requests[1].url == "https://infisical.example.com/api/v1/identities/identity-123"
+    assert transport.requests[2].method == "POST"
+    assert transport.requests[2].url == "https://infisical.example.com/api/v1/identities"
+    assert body(transport.requests[2]) == {
+        "name": "deploy-bot",
+        "organizationId": "org-123",
+        "role": "member",
+        "hasDeleteProtection": True,
+        "metadata": [{"key": "owner", "value": "platform"}],
+    }
+    assert transport.requests[3].method == "PATCH"
+    assert transport.requests[3].url == "https://infisical.example.com/api/v1/identities/identity-123"
+    assert body(transport.requests[3]) == {"name": "renamed", "role": "admin"}
+    assert transport.requests[4].method == "DELETE"
+    assert transport.requests[4].url == "https://infisical.example.com/api/v1/identities/identity-123"
+
+
+def test_project_identity_tools_build_requests(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    server.list_project_identities(search="deploy")
+    server.get_project_identity("identity-123")
+    server.create_project_identity(
+        name="project-bot",
+        has_delete_protection=True,
+        metadata=[{"key": "owner", "value": "platform"}],
+    )
+    server.update_project_identity("identity-123", name="project-bot-renamed")
+    server.delete_project_identity("identity-123")
+
+    assert transport.requests[0].method == "GET"
+    assert transport.requests[0].url == (
+        "https://infisical.example.com/api/v1/projects/project-123/identities"
+        "?offset=0&limit=20&search=deploy"
+    )
+    assert transport.requests[1].method == "GET"
+    assert transport.requests[1].url.endswith(
+        "/api/v1/projects/project-123/identities/identity-123"
+    )
+    assert transport.requests[2].method == "POST"
+    assert transport.requests[2].url.endswith("/api/v1/projects/project-123/identities")
+    assert body(transport.requests[2]) == {
+        "name": "project-bot",
+        "hasDeleteProtection": True,
+        "metadata": [{"key": "owner", "value": "platform"}],
+    }
+    assert transport.requests[3].method == "PATCH"
+    assert transport.requests[3].url.endswith(
+        "/api/v1/projects/project-123/identities/identity-123"
+    )
+    assert body(transport.requests[3]) == {"name": "project-bot-renamed"}
+    assert transport.requests[4].method == "DELETE"
+    assert transport.requests[4].url.endswith(
+        "/api/v1/projects/project-123/identities/identity-123"
+    )
+
+
+def test_project_membership_tools_build_user_and_identity_membership_requests(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    roles = [{"role": "viewer", "isTemporary": False}]
+    server.list_project_user_memberships()
+    server.invite_project_users(emails=["ops@example.com"], usernames=[], role_slugs=["viewer"])
+    server.update_project_user_membership("membership-123", roles=roles)
+    server.remove_project_users(usernames=["old-user"])
+    server.get_project_user_by_username("ops@example.com")
+    server.list_project_identity_memberships(roles=["viewer"], search="bot")
+    server.update_project_identity_membership("identity-123", roles=roles)
+    server.delete_project_identity_membership("identity-123")
+
+    assert transport.requests[0].url == (
+        "https://infisical.example.com/api/v1/projects/project-123/memberships"
+    )
+    assert transport.requests[1].method == "POST"
+    assert body(transport.requests[1]) == {
+        "emails": ["ops@example.com"],
+        "usernames": [],
+        "roleSlugs": ["viewer"],
+    }
+    assert transport.requests[2].method == "PATCH"
+    assert transport.requests[2].url.endswith("/api/v1/projects/project-123/memberships/membership-123")
+    assert body(transport.requests[2]) == {"roles": roles}
+    assert transport.requests[3].method == "DELETE"
+    assert body(transport.requests[3]) == {"usernames": ["old-user"]}
+    assert transport.requests[4].method == "POST"
+    assert transport.requests[4].url.endswith("/api/v1/projects/project-123/memberships/details")
+    assert body(transport.requests[4]) == {"username": "ops@example.com"}
+    assert transport.requests[5].method == "GET"
+    assert transport.requests[5].url == (
+        "https://infisical.example.com/api/v1/projects/project-123/memberships/identities"
+        "?offset=0&limit=20&search=bot&roles=viewer"
+    )
+    assert transport.requests[6].method == "PATCH"
+    assert transport.requests[6].url.endswith(
+        "/api/v1/projects/project-123/memberships/identities/identity-123"
+    )
+    assert body(transport.requests[6]) == {"roles": roles}
+    assert transport.requests[7].method == "DELETE"
+
+
+def test_project_roles_audit_logs_and_secret_imports_requests(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    permissions = [{"subject": "secrets", "action": ["read"], "conditions": {"environment": "dev"}}]
+    server.create_project_role(slug="ci", name="CI", permissions=permissions)
+    server.update_project_role("role-123", name="CI Updated", permissions=permissions)
+    server.get_project_role_by_slug("ci")
+    server.delete_project_role("role-123")
+    server.export_audit_logs(
+        project_id="project-123",
+        environment="dev",
+        event_type=["get-secret", "update-secret"],
+        actor_type="identity",
+        actor="identity-123",
+        event_metadata={"ipAddress": "127.0.0.1"},
+    )
+    server.list_secret_imports()
+    server.create_secret_import(
+        import_environment="prod",
+        import_path="/shared",
+        position=1,
+        is_replication=True,
+    )
+    server.update_secret_import("import-123", import_environment="stage", position=2)
+    server.delete_secret_import("import-123")
+
+    assert transport.requests[0].method == "POST"
+    assert transport.requests[0].url.endswith("/api/v1/projects/project-123/roles")
+    assert body(transport.requests[0]) == {"slug": "ci", "name": "CI", "permissions": permissions}
+    assert transport.requests[1].method == "PATCH"
+    assert body(transport.requests[1]) == {"name": "CI Updated", "permissions": permissions}
+    assert transport.requests[2].method == "GET"
+    assert transport.requests[2].url.endswith("/api/v1/projects/project-123/roles/slug/ci")
+    assert transport.requests[3].method == "DELETE"
+    assert transport.requests[4].method == "GET"
+    assert transport.requests[4].url == (
+        "https://infisical.example.com/api/v1/organization/audit-logs"
+        "?projectId=project-123&environment=dev&actorType=identity&eventType=get-secret"
+        "&eventType=update-secret&eventMetadata=ipAddress%3D127.0.0.1&actor=identity-123"
+    )
+    assert transport.requests[5].url == (
+        "https://infisical.example.com/api/v2/secret-imports"
+        "?projectId=project-123&environment=dev&path=%2Fapp"
+    )
+    assert transport.requests[6].method == "POST"
+    assert body(transport.requests[6]) == {
+        "projectId": "project-123",
+        "environment": "dev",
+        "path": "/app",
+        "import": {
+            "environment": "prod",
+            "path": "/shared",
+            "position": 1,
+        },
+        "isReplication": True,
+    }
+    assert transport.requests[7].method == "PATCH"
+    assert body(transport.requests[7]) == {
+        "projectId": "project-123",
+        "environment": "dev",
+        "path": "/app",
+        "import": {"environment": "stage", "position": 2},
+    }
+    assert transport.requests[8].method == "DELETE"
+    assert body(transport.requests[8]) == {
+        "projectId": "project-123",
+        "environment": "dev",
+        "path": "/app",
+    }
+
+
+def test_org_memberships_identity_privileges_and_secret_import_helpers(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    permissions = [{"subject": "secrets", "action": ["read"]}]
+    roles = [{"role": "viewer", "isTemporary": False}]
+
+    server.list_organization_user_memberships("org-123")
+    server.update_organization_user_membership(
+        "org-123",
+        "member-123",
+        role="admin",
+        is_active=True,
+    )
+    server.remove_organization_user_membership("org-123", "member-123")
+    server.remove_organization_user_memberships("org-123", membership_ids=["member-456"])
+    server.list_organization_identity_memberships("org-123", search="ci")
+    server.create_project_identity_membership("identity-123", roles=roles)
+    server.create_identity_project_additional_privilege(
+        identity_id="identity-123",
+        permissions=permissions,
+        privilege_type="permanent",
+        slug="ci-read",
+    )
+    server.get_identity_project_additional_privilege("privilege-123")
+    server.update_identity_project_additional_privilege(
+        "privilege-123",
+        permissions=permissions,
+        slug="ci-read-updated",
+    )
+    server.delete_identity_project_additional_privilege("privilege-123")
+
+    assert transport.requests[0].method == "GET"
+    assert transport.requests[0].url == (
+        "https://infisical.example.com/api/v2/organizations/org-123/memberships"
+    )
+    assert transport.requests[1].method == "PATCH"
+    assert transport.requests[1].url.endswith(
+        "/api/v2/organizations/org-123/memberships/member-123"
+    )
+    assert body(transport.requests[1]) == {"role": "admin", "isActive": True}
+    assert transport.requests[2].method == "DELETE"
+    assert transport.requests[2].url.endswith("/api/v2/organizations/org-123/memberships/member-123")
+    assert transport.requests[3].method == "DELETE"
+    assert body(transport.requests[3]) == {"membershipIds": ["member-456"]}
+    assert transport.requests[4].method == "GET"
+    assert transport.requests[4].url == (
+        "https://infisical.example.com/api/v2/organizations/org-123/identity-memberships"
+        "?offset=0&limit=100&search=ci"
+    )
+    assert transport.requests[5].method == "POST"
+    assert transport.requests[5].url.endswith(
+        "/api/v1/projects/project-123/memberships/identities/identity-123"
+    )
+    assert body(transport.requests[5]) == {"roles": roles}
+    assert transport.requests[6].method == "POST"
+    assert transport.requests[6].url.endswith("/api/v2/identity-project-additional-privilege")
+    assert body(transport.requests[6]) == {
+        "identityId": "identity-123",
+        "projectId": "project-123",
+        "permissions": permissions,
+        "type": "permanent",
+        "slug": "ci-read",
+    }
+    assert transport.requests[7].method == "GET"
+    assert transport.requests[7].url.endswith(
+        "/api/v2/identity-project-additional-privilege/privilege-123"
+    )
+    assert transport.requests[8].method == "PATCH"
+    assert body(transport.requests[8]) == {
+        "permissions": permissions,
+        "slug": "ci-read-updated",
+    }
+    assert transport.requests[9].method == "DELETE"
