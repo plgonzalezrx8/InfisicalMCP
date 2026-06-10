@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -55,6 +56,22 @@ def test_request_uses_base_url_query_and_bearer_token() -> None:
     )
     assert request.headers["Authorization"] == "Bearer token-123"
     assert request.body is None
+
+
+def test_request_json_serializes_dict_query_values() -> None:
+    transport = FakeTransport([json_response({"ok": True})])
+    client = InfisicalClient(
+        InfisicalSettings(
+            base_url="https://infisical.example.com",
+            token="token-123",
+        ),
+        transport=transport,
+    )
+
+    client.request("GET", "/api/example", query={"filter": {"key": "value"}})
+
+    query = parse_qs(urlparse(transport.requests[0].url).query)
+    assert query["filter"] == ['{"key":"value"}']
 
 
 def test_universal_auth_logs_in_and_caches_access_token() -> None:
@@ -123,4 +140,3 @@ def test_render_env_and_shell_exports_quote_values() -> None:
         "export QUOTE='it'\"'\"'s ok'\n"
         "export WITH_SPACE='hello world'\n"
     )
-

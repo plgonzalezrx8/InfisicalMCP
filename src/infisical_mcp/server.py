@@ -29,7 +29,8 @@ def get_client() -> InfisicalClient:
 mcp = FastMCP(
     "Infisical MCP",
     instructions=(
-        "Manage Infisical projects, environments, folders, and static secrets. "
+        "Manage Infisical projects, environments, folders, static secrets, "
+        "identities, project memberships, roles, audit logs, and secret imports. "
         "Use render_env_file or render_shell_exports when a project needs secrets."
     ),
 )
@@ -189,6 +190,661 @@ def delete_environment(
             f"{quote(environment_id, safe='')}"
         ),
         query={"hardDelete": hard_delete},
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_identities(org_id: str) -> Any:
+    """List organization machine identities."""
+    return get_client().request("GET", "/api/v1/identities", query={"orgId": org_id})
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_identity(identity_id: str) -> Any:
+    """Get a machine identity by ID."""
+    return get_client().request("GET", f"/api/v1/identities/{quote(identity_id, safe='')}")
+
+
+@mcp.tool(annotations=MUTATING)
+def create_identity(
+    name: str,
+    organization_id: str,
+    role: str = "no-access",
+    has_delete_protection: bool | None = None,
+    metadata: list[dict[str, str]] | None = None,
+) -> Any:
+    """Create an organization machine identity."""
+    return get_client().request(
+        "POST",
+        "/api/v1/identities",
+        json_body=compact_payload(
+            {
+                "name": name,
+                "organizationId": organization_id,
+                "role": role,
+                "hasDeleteProtection": has_delete_protection,
+                "metadata": metadata,
+            }
+        ),
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_identity(
+    identity_id: str,
+    name: str | None = None,
+    role: str | None = None,
+    has_delete_protection: bool | None = None,
+    metadata: list[dict[str, str]] | None = None,
+) -> Any:
+    """Update an organization machine identity."""
+    return get_client().request(
+        "PATCH",
+        f"/api/v1/identities/{quote(identity_id, safe='')}",
+        json_body=compact_payload(
+            {
+                "name": name,
+                "role": role,
+                "hasDeleteProtection": has_delete_protection,
+                "metadata": metadata,
+            }
+        ),
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def delete_identity(identity_id: str) -> Any:
+    """Delete an organization machine identity."""
+    return get_client().request("DELETE", f"/api/v1/identities/{quote(identity_id, safe='')}")
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_organization_user_memberships(organization_id: str) -> Any:
+    """List user memberships in an organization."""
+    return get_client().request(
+        "GET",
+        f"/api/v2/organizations/{quote(organization_id, safe='')}/memberships",
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_organization_user_membership(
+    organization_id: str,
+    membership_id: str,
+    role: str | None = None,
+    is_active: bool | None = None,
+    metadata: list[dict[str, str]] | None = None,
+) -> Any:
+    """Update an organization user membership."""
+    return get_client().request(
+        "PATCH",
+        (
+            f"/api/v2/organizations/{quote(organization_id, safe='')}/memberships/"
+            f"{quote(membership_id, safe='')}"
+        ),
+        json_body=compact_payload(
+            {"role": role, "isActive": is_active, "metadata": metadata}
+        ),
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def remove_organization_user_membership(organization_id: str, membership_id: str) -> Any:
+    """Remove one organization user membership by membership ID."""
+    return get_client().request(
+        "DELETE",
+        (
+            f"/api/v2/organizations/{quote(organization_id, safe='')}/memberships/"
+            f"{quote(membership_id, safe='')}"
+        ),
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def remove_organization_user_memberships(
+    organization_id: str,
+    membership_ids: list[str],
+) -> Any:
+    """Bulk remove organization user memberships by membership ID."""
+    return get_client().request(
+        "DELETE",
+        f"/api/v2/organizations/{quote(organization_id, safe='')}/memberships",
+        json_body={"membershipIds": membership_ids},
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_organization_identity_memberships(
+    org_id: str,
+    offset: int = 0,
+    limit: int = 100,
+    order_by: str | None = None,
+    order_direction: str | None = None,
+    search: str | None = None,
+) -> Any:
+    """List organization machine-identity memberships."""
+    return get_client().request(
+        "GET",
+        f"/api/v2/organizations/{quote(org_id, safe='')}/identity-memberships",
+        query={
+            "offset": offset,
+            "limit": limit,
+            "orderBy": order_by,
+            "orderDirection": order_direction,
+            "search": search,
+        },
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_project_identities(
+    project_id: str | None = None,
+    offset: int = 0,
+    limit: int = 20,
+    search: str | None = None,
+) -> Any:
+    """List machine identities directly managed within a project."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "GET",
+        f"/api/v1/projects/{quote(project_id, safe='')}/identities",
+        query={"offset": offset, "limit": limit, "search": search},
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_project_identity(identity_id: str, project_id: str | None = None) -> Any:
+    """Get a project-managed identity by ID."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "GET",
+        f"/api/v1/projects/{quote(project_id, safe='')}/identities/{quote(identity_id, safe='')}",
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def create_project_identity(
+    name: str,
+    project_id: str | None = None,
+    has_delete_protection: bool | None = None,
+    metadata: list[dict[str, str]] | None = None,
+) -> Any:
+    """Create a machine identity scoped to a project."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "POST",
+        f"/api/v1/projects/{quote(project_id, safe='')}/identities",
+        json_body=compact_payload(
+            {
+                "name": name,
+                "hasDeleteProtection": has_delete_protection,
+                "metadata": metadata,
+            }
+        ),
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_project_identity(
+    identity_id: str,
+    project_id: str | None = None,
+    name: str | None = None,
+    has_delete_protection: bool | None = None,
+    metadata: list[dict[str, str]] | None = None,
+) -> Any:
+    """Update a project-managed machine identity."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "PATCH",
+        f"/api/v1/projects/{quote(project_id, safe='')}/identities/{quote(identity_id, safe='')}",
+        json_body=compact_payload(
+            {
+                "name": name,
+                "hasDeleteProtection": has_delete_protection,
+                "metadata": metadata,
+            }
+        ),
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def delete_project_identity(identity_id: str, project_id: str | None = None) -> Any:
+    """Delete a project-managed machine identity."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "DELETE",
+        f"/api/v1/projects/{quote(project_id, safe='')}/identities/{quote(identity_id, safe='')}",
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_project_user_memberships(project_id: str | None = None) -> Any:
+    """List user memberships in a project."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request("GET", f"/api/v1/projects/{quote(project_id, safe='')}/memberships")
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_project_user_by_username(username: str, project_id: str | None = None) -> Any:
+    """Get a project user membership by username."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "POST",
+        f"/api/v1/projects/{quote(project_id, safe='')}/memberships/details",
+        json_body={"username": username},
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def invite_project_users(
+    project_id: str | None = None,
+    emails: list[str] | None = None,
+    usernames: list[str] | None = None,
+    role_slugs: list[str] | None = None,
+) -> Any:
+    """Invite organization users to a project and assign role slugs."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    if role_slugs == []:
+        role_slugs = None
+    return client.request(
+        "POST",
+        f"/api/v1/projects/{quote(project_id, safe='')}/memberships",
+        json_body=compact_payload(
+            {
+                "emails": emails,
+                "usernames": usernames,
+                "roleSlugs": role_slugs,
+            }
+        ),
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_project_user_membership(
+    membership_id: str,
+    roles: list[dict[str, Any]],
+    project_id: str | None = None,
+) -> Any:
+    """Update a project user membership's assigned roles."""
+    require_roles(roles)
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "PATCH",
+        f"/api/v1/projects/{quote(project_id, safe='')}/memberships/{quote(membership_id, safe='')}",
+        json_body={"roles": roles},
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def remove_project_users(
+    project_id: str | None = None,
+    emails: list[str] | None = None,
+    usernames: list[str] | None = None,
+) -> Any:
+    """Remove users from a project by email or username."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "DELETE",
+        f"/api/v1/projects/{quote(project_id, safe='')}/memberships",
+        json_body=compact_payload({"emails": emails, "usernames": usernames}),
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_project_identity_memberships(
+    project_id: str | None = None,
+    offset: int = 0,
+    limit: int = 20,
+    search: str | None = None,
+    roles: list[str] | None = None,
+) -> Any:
+    """List machine-identity memberships and roles in a project."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "GET",
+        f"/api/v1/projects/{quote(project_id, safe='')}/memberships/identities",
+        query={"offset": offset, "limit": limit, "identityName": search, "roles": roles},
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def create_project_identity_membership(
+    identity_id: str,
+    roles: list[dict[str, Any]],
+    project_id: str | None = None,
+) -> Any:
+    """Create a machine identity project membership with assigned roles."""
+    require_roles(roles)
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "POST",
+        (
+            f"/api/v1/projects/{quote(project_id, safe='')}/memberships/identities/"
+            f"{quote(identity_id, safe='')}"
+        ),
+        json_body={"roles": roles},
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_project_identity_membership(
+    identity_id: str,
+    roles: list[dict[str, Any]],
+    project_id: str | None = None,
+) -> Any:
+    """Update a machine identity's project membership roles."""
+    require_roles(roles)
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "PATCH",
+        (
+            f"/api/v1/projects/{quote(project_id, safe='')}/memberships/identities/"
+            f"{quote(identity_id, safe='')}"
+        ),
+        json_body={"roles": roles},
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def delete_project_identity_membership(identity_id: str, project_id: str | None = None) -> Any:
+    """Delete a machine identity's project membership."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "DELETE",
+        (
+            f"/api/v1/projects/{quote(project_id, safe='')}/memberships/identities/"
+            f"{quote(identity_id, safe='')}"
+        ),
+    )
+
+
+def require_roles(roles: list[dict[str, Any]]) -> None:
+    if not roles:
+        raise ValueError("roles must include at least one role assignment.")
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_project_roles(project_id: str | None = None) -> Any:
+    """List custom project roles."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request("GET", f"/api/v1/projects/{quote(project_id, safe='')}/roles")
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_project_role_by_slug(role_slug: str, project_id: str | None = None) -> Any:
+    """Get a project role by slug."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "GET",
+        f"/api/v1/projects/{quote(project_id, safe='')}/roles/slug/{quote(role_slug, safe='')}",
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def create_project_role(
+    slug: str,
+    name: str,
+    permissions: list[dict[str, Any]],
+    project_id: str | None = None,
+    description: str | None = None,
+) -> Any:
+    """Create a custom project role with Infisical permission rules."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "POST",
+        f"/api/v1/projects/{quote(project_id, safe='')}/roles",
+        json_body=compact_payload(
+            {"slug": slug, "name": name, "description": description, "permissions": permissions}
+        ),
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_project_role(
+    role_id: str,
+    project_id: str | None = None,
+    slug: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    permissions: list[dict[str, Any]] | None = None,
+) -> Any:
+    """Update a custom project role."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "PATCH",
+        f"/api/v1/projects/{quote(project_id, safe='')}/roles/{quote(role_id, safe='')}",
+        json_body=compact_payload(
+            {"slug": slug, "name": name, "description": description, "permissions": permissions}
+        ),
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def delete_project_role(role_id: str, project_id: str | None = None) -> Any:
+    """Delete a custom project role."""
+    client = get_client()
+    project_id = client.default_project_id(project_id)
+    return client.request(
+        "DELETE",
+        f"/api/v1/projects/{quote(project_id, safe='')}/roles/{quote(role_id, safe='')}",
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def create_identity_project_additional_privilege(
+    identity_id: str,
+    permissions: list[dict[str, Any]],
+    privilege_type: dict[str, Any],
+    project_id: str | None = None,
+    slug: str | None = None,
+) -> Any:
+    """Create additional project-specific privileges for an identity."""
+    client = get_client()
+    return client.request(
+        "POST",
+        "/api/v2/identity-project-additional-privilege",
+        json_body=compact_payload(
+            {
+                "identityId": identity_id,
+                "projectId": client.default_project_id(project_id),
+                "permissions": permissions,
+                "type": privilege_type,
+                "slug": slug,
+            }
+        ),
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def get_identity_project_additional_privilege(privilege_id: str) -> Any:
+    """Get an identity's project-specific additional privilege by ID."""
+    return get_client().request(
+        "GET",
+        f"/api/v2/identity-project-additional-privilege/{quote(privilege_id, safe='')}",
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_identity_project_additional_privilege(
+    privilege_id: str,
+    permissions: list[dict[str, Any]] | None = None,
+    slug: str | None = None,
+    privilege_type: dict[str, Any] | None = None,
+) -> Any:
+    """Update an identity's project-specific additional privilege."""
+    return get_client().request(
+        "PATCH",
+        f"/api/v2/identity-project-additional-privilege/{quote(privilege_id, safe='')}",
+        json_body=compact_payload(
+            {"permissions": permissions, "slug": slug, "type": privilege_type}
+        ),
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def delete_identity_project_additional_privilege(privilege_id: str) -> Any:
+    """Delete an identity's project-specific additional privilege."""
+    return get_client().request(
+        "DELETE",
+        f"/api/v2/identity-project-additional-privilege/{quote(privilege_id, safe='')}",
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+def export_audit_logs(
+    project_id: str | None = None,
+    environment: str | None = None,
+    actor_type: str | None = None,
+    secret_path: str | None = None,
+    secret_key: str | None = None,
+    event_type: str | list[str] | None = None,
+    user_agent_type: str | None = None,
+    event_metadata: str | dict[str, Any] | None = None,
+    actor: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> Any:
+    """Export organization audit logs with optional filters."""
+    return get_client().request(
+        "GET",
+        "/api/v1/organization/audit-logs",
+        query={
+            "projectId": project_id,
+            "environment": environment,
+            "actorType": actor_type,
+            "secretPath": secret_path,
+            "secretKey": secret_key,
+            "eventType": event_type,
+            "userAgentType": user_agent_type,
+            "eventMetadata": format_audit_event_metadata(event_metadata),
+            "actor": actor,
+            "startDate": start_date,
+            "endDate": end_date,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+def format_audit_event_metadata(event_metadata: str | dict[str, Any] | None) -> str | None:
+    if event_metadata is None or isinstance(event_metadata, str):
+        return event_metadata
+    return ",".join(f"{key}={value}" for key, value in event_metadata.items())
+
+
+@mcp.tool(annotations=READ_ONLY)
+def list_secret_imports(
+    project_id: str | None = None,
+    environment: str | None = None,
+    path: str | None = None,
+) -> Any:
+    """List configured secret imports for a project environment and path."""
+    client = get_client()
+    return client.request(
+        "GET",
+        "/api/v2/secret-imports",
+        query={
+            "projectId": client.default_project_id(project_id),
+            "environment": client.default_environment(environment),
+            "path": client.default_secret_path(path),
+        },
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def create_secret_import(
+    import_environment: str,
+    import_path: str,
+    project_id: str | None = None,
+    environment: str | None = None,
+    path: str | None = None,
+    is_replication: bool | None = None,
+) -> Any:
+    """Create a secret import from another environment/path."""
+    client = get_client()
+    return client.request(
+        "POST",
+        "/api/v2/secret-imports",
+        json_body=compact_payload(
+            {
+                "projectId": client.default_project_id(project_id),
+                "environment": client.default_environment(environment),
+                "path": client.default_secret_path(path),
+                "import": compact_payload(
+                    {
+                        "environment": import_environment,
+                        "path": import_path,
+                    }
+                ),
+                "isReplication": is_replication,
+            }
+        ),
+    )
+
+
+@mcp.tool(annotations=MUTATING)
+def update_secret_import(
+    secret_import_id: str,
+    project_id: str | None = None,
+    environment: str | None = None,
+    path: str | None = None,
+    import_environment: str | None = None,
+    import_path: str | None = None,
+    position: int | None = None,
+) -> Any:
+    """Update a configured secret import."""
+    client = get_client()
+    return client.request(
+        "PATCH",
+        f"/api/v2/secret-imports/{quote(secret_import_id, safe='')}",
+        json_body={
+            "projectId": client.default_project_id(project_id),
+            "environment": client.default_environment(environment),
+            "path": client.default_secret_path(path),
+            "import": compact_payload(
+                {"environment": import_environment, "path": import_path, "position": position}
+            ),
+        },
+    )
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+def delete_secret_import(
+    secret_import_id: str,
+    project_id: str | None = None,
+    environment: str | None = None,
+    path: str | None = None,
+) -> Any:
+    """Delete a configured secret import."""
+    client = get_client()
+    return client.request(
+        "DELETE",
+        f"/api/v2/secret-imports/{quote(secret_import_id, safe='')}",
+        json_body={
+            "projectId": client.default_project_id(project_id),
+            "environment": client.default_environment(environment),
+            "path": client.default_secret_path(path),
+        },
     )
 
 
@@ -481,4 +1137,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -314,7 +314,9 @@ def _clean_params(values: JsonObject) -> JsonObject:
             continue
         if isinstance(value, bool):
             params[key] = "true" if value else "false"
-        elif isinstance(value, (dict, list, tuple)) and key == "metadataFilter":
+        elif isinstance(value, dict):
+            params[key] = json.dumps(value, separators=(",", ":"))
+        elif isinstance(value, (list, tuple)) and key == "metadataFilter":
             params[key] = json.dumps(value, separators=(",", ":"))
         else:
             params[key] = value
@@ -329,4 +331,3 @@ def _parse_json_bytes(body: bytes) -> Any:
         return json.loads(text)
     except json.JSONDecodeError:
         return {"raw": text}
-
