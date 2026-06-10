@@ -514,7 +514,7 @@ def list_project_identity_memberships(
     return client.request(
         "GET",
         f"/api/v1/projects/{quote(project_id, safe='')}/memberships/identities",
-        query={"offset": offset, "limit": limit, "search": search, "roles": roles},
+        query={"offset": offset, "limit": limit, "identityName": search, "roles": roles},
     )
 
 
@@ -652,7 +652,7 @@ def delete_project_role(role_id: str, project_id: str | None = None) -> Any:
 def create_identity_project_additional_privilege(
     identity_id: str,
     permissions: list[dict[str, Any]],
-    privilege_type: str,
+    privilege_type: dict[str, Any],
     project_id: str | None = None,
     slug: str | None = None,
 ) -> Any:
@@ -687,7 +687,7 @@ def update_identity_project_additional_privilege(
     privilege_id: str,
     permissions: list[dict[str, Any]] | None = None,
     slug: str | None = None,
-    privilege_type: str | None = None,
+    privilege_type: dict[str, Any] | None = None,
 ) -> Any:
     """Update an identity's project-specific additional privilege."""
     return get_client().request(
@@ -778,7 +778,6 @@ def create_secret_import(
     project_id: str | None = None,
     environment: str | None = None,
     path: str | None = None,
-    position: int | None = None,
     is_replication: bool | None = None,
 ) -> Any:
     """Create a secret import from another environment/path."""
@@ -795,7 +794,6 @@ def create_secret_import(
                     {
                         "environment": import_environment,
                         "path": import_path,
-                        "position": position,
                     }
                 ),
                 "isReplication": is_replication,

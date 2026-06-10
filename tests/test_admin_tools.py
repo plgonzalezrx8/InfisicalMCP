@@ -174,7 +174,7 @@ def test_project_membership_tools_build_user_and_identity_membership_requests(mo
     assert transport.requests[6].method == "GET"
     assert transport.requests[6].url == (
         "https://infisical.example.com/api/v1/projects/project-123/memberships/identities"
-        "?offset=0&limit=20&search=bot&roles=viewer"
+        "?offset=0&limit=20&identityName=bot&roles=viewer"
     )
     assert transport.requests[7].method == "POST"
     assert transport.requests[7].url.endswith(
@@ -226,7 +226,6 @@ def test_project_roles_audit_logs_and_secret_imports_requests(monkeypatch) -> No
     server.create_secret_import(
         import_environment="prod",
         import_path="/shared",
-        position=1,
         is_replication=True,
     )
     server.update_secret_import("import-123", import_environment="stage", position=2)
@@ -258,7 +257,6 @@ def test_project_roles_audit_logs_and_secret_imports_requests(monkeypatch) -> No
         "import": {
             "environment": "prod",
             "path": "/shared",
-            "position": 1,
         },
         "isReplication": True,
     }
@@ -287,11 +285,27 @@ def test_audit_event_metadata_uses_documented_key_value_format(monkeypatch) -> N
     assert query["eventMetadata"] == ["ipAddress=127.0.0.1,secretPath=/app"]
 
 
+def test_admin_client_serializes_dict_query_values(monkeypatch) -> None:
+    transport = FakeTransport()
+    install_fake_client(monkeypatch, transport)
+
+    client = server.get_client()
+    client.request(
+        "GET",
+        "/api/v1/example",
+        query={"metadataFilter": {"ipAddress": "127.0.0.1"}},
+    )
+
+    query = parse_qs(urlparse(transport.requests[0].url).query)
+    assert query["metadataFilter"] == ['{"ipAddress":"127.0.0.1"}']
+
+
 def test_org_memberships_identity_privileges_and_secret_import_helpers(monkeypatch) -> None:
     transport = FakeTransport()
     install_fake_client(monkeypatch, transport)
 
     permissions = [{"subject": "secrets", "action": ["read"]}]
+    privilege_type = {"kind": "permanent"}
     roles = [{"role": "viewer", "isTemporary": False}]
 
     server.list_organization_user_memberships("org-123")
@@ -308,7 +322,7 @@ def test_org_memberships_identity_privileges_and_secret_import_helpers(monkeypat
     server.create_identity_project_additional_privilege(
         identity_id="identity-123",
         permissions=permissions,
-        privilege_type="permanent",
+        privilege_type=privilege_type,
         slug="ci-read",
     )
     server.get_identity_project_additional_privilege("privilege-123")
@@ -316,6 +330,7 @@ def test_org_memberships_identity_privileges_and_secret_import_helpers(monkeypat
         "privilege-123",
         permissions=permissions,
         slug="ci-read-updated",
+        privilege_type={"kind": "temporary", "expiresAt": "2026-06-11T00:00:00Z"},
     )
     server.delete_identity_project_additional_privilege("privilege-123")
 
@@ -348,7 +363,7 @@ def test_org_memberships_identity_privileges_and_secret_import_helpers(monkeypat
         "identityId": "identity-123",
         "projectId": "project-123",
         "permissions": permissions,
-        "type": "permanent",
+        "type": privilege_type,
         "slug": "ci-read",
     }
     assert transport.requests[7].method == "GET"
@@ -359,5 +374,6 @@ def test_org_memberships_identity_privileges_and_secret_import_helpers(monkeypat
     assert body(transport.requests[8]) == {
         "permissions": permissions,
         "slug": "ci-read-updated",
+        "type": {"kind": "temporary", "expiresAt": "2026-06-11T00:00:00Z"},
     }
     assert transport.requests[9].method == "DELETE"
