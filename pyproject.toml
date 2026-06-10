@@ -1,0 +1,27 @@
+[project]
+name = "infisical-mcp"
+version = "0.1.0"
+description = "FastMCP server for managing Infisical projects, environments, folders, and secrets."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.0,<4.0",
+]
+
+[project.scripts]
+infisical-mcp = "infisical_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
